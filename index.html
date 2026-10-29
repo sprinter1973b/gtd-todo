@@ -1,0 +1,90 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>GTD To Do</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:Segoe UI,Arial,sans-serif;font-size:19px;background:#f4f6fa;color:#1d2433}
+header{background:#2b5797;color:#fff;padding:14px 18px}h1{margin:0;font-size:26px}
+.wrap{max-width:1100px;margin:auto;padding:14px}
+.add{display:flex;gap:8px;flex-wrap:wrap}.add input{flex:1;min-width:220px}
+input,select,button{font-size:18px;padding:10px;border:1px solid #bbc;border-radius:8px}
+button{background:#2b5797;color:#fff;border:0;cursor:pointer}button.sec{background:#e3e8f2;color:#1d2433}button.del{background:#c0392b}
+.tabs,.chips{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0}.tabs button,.chips button{background:#e3e8f2;color:#1d2433}
+.tabs button.on,.chips button.on{background:#2b5797;color:#fff}
+.task{display:flex;align-items:center;gap:10px;background:#fff;border-radius:10px;padding:10px 12px;margin:6px 0;box-shadow:0 1px 3px #0002;cursor:pointer}
+.task input[type=checkbox]{width:28px;height:28px;flex:none}.task .t{flex:1}.meta{font-size:15px;color:#667}
+.overdue{border-left:6px solid #d33}.overdue .due{color:#d33;font-weight:bold}.note{font-size:15px;color:#778;white-space:pre-wrap;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}dialog textarea{width:100%;font:inherit;font-size:18px;padding:10px;border:1px solid #bbc;border-radius:8px}
+.done .t{text-decoration:line-through;color:#889}
+.p1{background:#fde2e2}.p2{background:#e2f0fd}.p3{background:#fff4d6}.p4{background:#eceff3}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.grid>div{border-radius:10px;padding:8px}
+h2{font-size:21px;margin:14px 0 4px}.tools{margin-top:24px;display:flex;gap:8px;flex-wrap:wrap}
+dialog{border:0;border-radius:12px;width:min(520px,95vw)}dialog label{display:block;margin:8px 0}dialog input,dialog select{width:100%}
+@media(max-width:700px){.grid{grid-template-columns:1fr}}
+</style></head><body><header style="display:flex;justify-content:space-between;align-items:center"><h1>GTD To Do</h1><span><span id="who" style="font-size:15px;margin-right:8px"></span><button class="sec" id="authBtn" hidden></button></span></header><div id="gate" class="wrap" hidden><p>Sign in to see your tasks.</p><button onclick="signIn()">Sign in with Google</button></div><div class="wrap" id="app" hidden>
+<div class="add"><input id="q" placeholder="Quick add to Inbox… press Enter"><button onclick="quick()">Add</button></div>
+<div class="tabs" id="tabs"></div><input id="search" placeholder="Search…" style="width:100%" oninput="render()">
+<div class="chips" id="chips"></div><div id="view"></div>
+<div class="tools"><button class="sec" onclick="expJSON()">Export JSON</button><button class="sec" onclick="expCSV()">Export CSV</button>
+<button class="sec" onclick="imp.click()">Import old tasks (JSON/CSV)</button><input type="file" id="imp" accept=".json,.csv" hidden onchange="doImp(this)"></div></div>
+<dialog id="dlg"><form method="dialog" id="f"><h2>Edit task</h2>
+<label>Task<input name="task" required></label>
+<label>Status<select name="status"></select></label><label>Context<select name="context"></select></label>
+<label>Notes<textarea name="notes" rows="3"></textarea></label><label>Due date<input type="date" name="due"></label><label>Priority<select name="priority"></select></label>
+<div style="display:flex;gap:8px;margin-top:10px"><button value="save">Save</button><button class="sec" value="cancel" formnovalidate>Cancel</button><button class="del" value="del" formnovalidate>Delete</button></div></form></dialog>
+<script>
+const ST=["To Do","In Progress","Holding/Waiting","Done"],CX=["Inbox","Calls","At Computer","Errands","Home"],
+PR={1:"1 Urgent & Important",2:"2 Important, not urgent",3:"3 Urgent, not important",4:"4 Neither"},KEY="gtd.tasks.v1";
+let tasks=JSON.parse(localStorage.getItem(KEY)||"[]"),view="next",ctx="All",editing=null;
+tasks.forEach(t=>{if(t.notes==null)t.notes=""});const save=()=>{localStorage.setItem(KEY,JSON.stringify(tasks));window.cloudSave&&window.cloudSave(tasks)};
+const today=()=>new Date().toISOString().slice(0,10);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function quick(){const v=q.value.trim();if(!v)return;tasks.unshift({id:Date.now()+"",task:v,status:"To Do",context:"Inbox",due:"",priority:2,notes:""});q.value="";save();render()}
+q.onkeydown=e=>{if(e.key=="Enter")quick()};
+const VIEWS={next:"Next Actions",grid:"Priority Grid",wait:"Waiting/Holding",done:"Done",all:"All"};
+function row(t){const od=t.due&&t.due<today()&&t.status!="Done";return `<div class="task ${od?"overdue":""} ${t.status=="Done"?"done":""}" onclick="edit('${t.id}')">
+<input type="checkbox" ${t.status=="Done"?"checked":""} onclick="event.stopPropagation();tog('${t.id}')"><div class="t">${esc(t.task)}${t.notes?" 📝":""}${t.notes?`<div class="note">${esc(t.notes)}</div>`:""}<div class="meta">${t.context} · ${t.status} · P${t.priority}${t.due?` · <span class="due">Due ${t.due}${od?" (overdue)":""}</span>`:""}</div></div></div>`}
+function list(a){a=a.slice().sort((x,y)=>x.priority-y.priority||(x.due||"9").localeCompare(y.due||"9"));return a.length?a.map(row).join(""):'<p class="meta">Nothing here.</p>'}
+function render(){tabs.innerHTML=Object.entries(VIEWS).map(([k,v])=>`<button class="${k==view?"on":""}" onclick="view='${k}';render()">${v}</button>`).join("");
+chips.innerHTML=["All",...CX].map(c=>`<button class="${c==ctx?"on":""}" onclick="ctx='${c}';render()">${c}</button>`).join("");
+const s=search.value.toLowerCase();let a=tasks.filter(t=>(ctx=="All"||t.context==ctx)&&(!s||(t.task+" "+(t.notes||"")).toLowerCase().includes(s)));let h="";
+if(view=="next"){a=a.filter(t=>t.status=="To Do"||t.status=="In Progress");for(const c of CX){const g=a.filter(t=>t.context==c);if(g.length)h+=`<h2>${c} (${g.length})</h2>`+list(g)}if(!h)h='<p class="meta">All clear!</p>'}
+else if(view=="grid"){a=a.filter(t=>t.status!="Done");h='<div class="grid">'+[1,2,3,4].map(p=>`<div class="p${p}"><h2>${PR[p]}</h2>${list(a.filter(t=>t.priority==p))}</div>`).join("")+"</div>"}
+else if(view=="wait")h=list(a.filter(t=>t.status=="Holding/Waiting"));else if(view=="done")h=list(a.filter(t=>t.status=="Done"));else h=list(a);
+document.getElementById("view").innerHTML=h}
+function tog(id){const t=tasks.find(t=>t.id==id);t.status=t.status=="Done"?"To Do":"Done";save();render()}
+const fill=(n,o)=>f[n].innerHTML=o.map(([v,l])=>`<option value="${v}">${l}</option>`).join("");
+fill("status",ST.map(x=>[x,x]));fill("context",CX.map(x=>[x,x]));fill("priority",Object.entries(PR));
+function edit(id){editing=tasks.find(t=>t.id==id);for(const k of["task","status","context","due","priority","notes"])f[k].value=editing[k]||"";dlg.showModal()}
+dlg.onclose=()=>{const r=dlg.returnValue;if(r=="save"){for(const k of["task","status","context","due","notes"])editing[k]=f[k].value;editing.priority=+f.priority.value}
+else if(r=="del"&&confirm("Delete this task?"))tasks=tasks.filter(t=>t!==editing);save();render()};
+function dl(n,d,m){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([d],{type:m}));a.download=n;a.click()}
+const stamp=()=>today();
+function expJSON(){dl(`gtd-backup-${stamp()}.json`,JSON.stringify(tasks,null,2),"application/json")}
+const F=["task","status","context","due","priority","notes"];
+function expCSV(){dl(`gtd-backup-${stamp()}.csv`,[F.join(","),...tasks.map(t=>F.map(k=>'"'+String(t[k]??"").replace(/"/g,'""')+'"').join(","))].join("\r\n"),"text/csv")}
+function parseCSV(s){const r=[];let row=[],c="",q=false;for(let i=0;i<s.length;i++){const ch=s[i];if(q){if(ch=='"'&&s[i+1]=='"'){c+='"';i++}else if(ch=='"')q=false;else c+=ch}
+else if(ch=='"')q=true;else if(ch==","){row.push(c);c=""}else if(ch=="\n"){row.push(c.replace(/\r$/,""));r.push(row);row=[];c=""}else c+=ch}if(c||row.length){row.push(c);r.push(row)}return r}
+function doImp(inp){const file=inp.files[0];if(!file)return;file.text().then(txt=>{let a;try{if(file.name.endsWith(".json"))a=JSON.parse(txt);
+else{const r=parseCSV(txt).filter(x=>x.join("").trim());const hd=r.shift().map(x=>x.trim().toLowerCase());a=r.map(x=>Object.fromEntries(hd.map((h,i)=>[h,x[i]||""])))}
+a=a.map((t,i)=>({id:Date.now()+"_"+i,task:t.task||"",status:ST.includes(t.status)?t.status:"To Do",context:CX.includes(t.context)?t.context:"Inbox",due:t.due||"",priority:+t.priority||4,notes:t.notes||""})).filter(t=>t.task);
+if(confirm(`Replace your ${tasks.length} tasks with ${a.length} imported tasks? (Cancel = add them instead)`))tasks=a;else tasks=tasks.concat(a);save();render()}catch(e){alert("Could not import: "+e.message)}inp.value=""})}
+render();
+window.setTasks=a=>{tasks=a.map(t=>({notes:"",...t}));localStorage.setItem(KEY,JSON.stringify(tasks));render()};
+</script>
+<script type="module">
+import {firebaseConfig} from "./config.js";
+import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {getAuth,GoogleAuthProvider,signInWithPopup,signOut,onAuthStateChanged} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {initializeFirestore,persistentLocalCache,doc,onSnapshot,setDoc} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+const app=initializeApp(firebaseConfig),auth=getAuth(app),db=initializeFirestore(app,{localCache:persistentLocalCache()});
+let ref=null,unsub=null;
+window.signIn=()=>signInWithPopup(auth,new GoogleAuthProvider()).catch(e=>alert("Sign-in failed: "+e.message));
+window.cloudSave=a=>{if(ref)setDoc(ref,{tasks:a,updated:Date.now()}).catch(e=>alert("Sync failed: "+e.message))};
+onAuthStateChanged(auth,u=>{unsub&&unsub();unsub=null;ref=null;
+ document.getElementById("gate").hidden=!!u;document.getElementById("app").hidden=!u;
+ const b=document.getElementById("authBtn");b.hidden=!u;b.textContent="Sign out";b.onclick=()=>{localStorage.removeItem("gtd.tasks.v1");signOut(auth)};
+ document.getElementById("who").textContent=u?u.email:"";
+ if(!u){window.setTasks([]);return}
+ ref=doc(db,"users",u.uid);
+ unsub=onSnapshot(ref,s=>{if(s.exists())window.setTasks(s.data().tasks||[]);
+  else{const local=JSON.parse(localStorage.getItem("gtd.tasks.v1")||"[]");window.setTasks(local);if(local.length)cloudSave(local)}},
+  e=>alert("Can't load tasks: "+e.message));
+});
+</script></body></html>
